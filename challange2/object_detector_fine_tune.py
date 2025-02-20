@@ -107,6 +107,7 @@ def evaluate_model(model: models, dataloader: DataLoader) -> None:
 path = Path("C:\\Users\\Milena\\Downloads\\coding_challenge\\challenge2")
 dataset_path = path / "data"
 train_annotation_file = path / "train_set.txt"
+test_annotation_file = Path(path) / "test_set.txt"
 
 # Define transformations
 transform = transforms.Compose([
@@ -120,9 +121,14 @@ transform = transforms.Compose([
 # Load dataset
 train_dataset = RodentsDataset(train_annotation_file, dataset_path, transform=transform)
 train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+test_dataset = RodentsDataset(test_annotation_file, dataset_path, transform=transform)
+test_loader = DataLoader(test_dataset, batch_size=4, shuffle=False)
 
 # Initialize model
 model = get_resnet(num_classes=3)
+
+# Evaluate the model before fine-tuning
+evaluate_model(model, test_loader)
 
 # Define loss and optimizer
 criterion = torch.nn.CrossEntropyLoss()
@@ -137,11 +143,6 @@ train_model(
     num_epochs=100,
     patience=3,
     model_path=path / "model.pth")
-
-# Load test set
-test_annotation_file = Path(path) / "test_set.txt"
-test_dataset = RodentsDataset(test_annotation_file, dataset_path, transform=transform)
-test_loader = DataLoader(test_dataset, batch_size=4, shuffle=False)
 
 # Evaluate the model
 evaluate_model(model, test_loader)
