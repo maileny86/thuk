@@ -10,6 +10,7 @@ from PIL import Image
 import torch.nn as nn
 from numpy.typing import NDArray
 import pandas as pd
+import typer
 from sklearn.metrics import classification_report
 
 # region constants
@@ -74,7 +75,7 @@ def train_model(
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-        epoch_loss = running_loss / len(train_loader)
+        epoch_loss = running_loss / len(dataloader)
         print(f"Epoch {epoch+1}, Loss: {epoch_loss}")
         
         # Early stopping if the loss does not improve
@@ -88,8 +89,9 @@ def train_model(
                 print("Early stopping triggered")
                 break
 
-def evaluate_model(model: models, dataloader: DataLoader) -> None:
+def evaluate_model(model: models, model_path: Path, dataloader: DataLoader) -> None:
     """Evaluate the model using the test set."""
+    model.load_state_dict(torch.load(model_path))
     model.eval()
     y_true: list[NDArray] = []
     y_pred: list[NDArray] = []
@@ -103,46 +105,44 @@ def evaluate_model(model: models, dataloader: DataLoader) -> None:
     
     print(classification_report(y_true, y_pred, target_names=CLASS_MAPPING.keys()))
 
-# Define paths
-path = Path("C:\\Users\\Milena\\Downloads\\coding_challenge\\challenge2")
-dataset_path = path / "data"
-train_annotation_file = path / "train_set.txt"
-test_annotation_file = Path(path) / "test_set.txt"
 
-# Define transformations
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.RandomHorizontalFlip(),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
+def main(
+    dataset_path: Path,
+    train_annotation_file: Path,
+    test_annotation_file: Path,
+    model_path: Path) -> None:
+    """Main function to train and evaluate the model."""
+    # Define transformations
+    transform = transforms.Compose([
+        transforms.Resize((112, 112)),
+        transforms.ToTensor(),
+    ])
 
-# Load dataset
-train_dataset = RodentsDataset(train_annotation_file, dataset_path, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-test_dataset = RodentsDataset(test_annotation_file, dataset_path, transform=transform)
-test_loader = DataLoader(test_dataset, batch_size=4, shuffle=False)
+    # Load dataset
+    train_dataset = RodentsDataset(train_annotation_file, dataset_path, transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+    test_dataset = RodentsDataset(test_annotation_file, dataset_path, transform=transform)
+    test_loader = DataLoader(test_dataset, batch_size=4, shuffle=False)
 
-# Initialize model
-model = get_resnet(num_classes=3)
+    # Initialize model
+    model = get_resnet(num_classes=3)
 
-# Evaluate the model before fine-tuning
-evaluate_model(model, test_loader)
+    # Define loss and optimizer
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
 
-# Define loss and optimizer
-criterion = torch.nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
+    # Train model
+    train_model(
+        model,
+        train_loader,
+        criterion,
+        optimizer,
+        num_epochs=100,
+        patience=3,
+        model_path=model_path)
 
-# Train model
-train_model(
-    model,
-    train_loader,
-    criterion,
-    optimizer,
-    num_epochs=100,
-    patience=3,
-    model_path=path / "model.pth")
+    # Evaluate the model
+    evaluate_model(model, model_path, test_loader)
 
-# Evaluate the model
-evaluate_model(model, test_loader)
+if __name__ == "__main__":
+     typer.run(main)
