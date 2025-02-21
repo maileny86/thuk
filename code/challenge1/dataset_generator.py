@@ -6,11 +6,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torchvision import models, transforms
+from torchvision import models
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score
 from pathlib import Path
-import psutil
 import numpy as np
 import gc
 import pandas as pd
@@ -25,9 +24,6 @@ BATCH_SIZE: int = 32
 EPOCHS: int = 10
 DEVICE: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RESULTS_DIR: Path = Path("results")
-TRANSFORM: transforms.Compose = transforms.Compose([
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
 # endregion
     
 class ArrowDataset(Dataset):
@@ -73,22 +69,25 @@ class ArrowDataset(Dataset):
 
 
 class SimpleCNN(nn.Module):
-    def __init__(self, num_classes=10, batch_norm=False):
+    def __init__(self, num_classes=10, batch_norm=False, dropout_rate=0.0):
         super(SimpleCNN, self).__init__()
         self.batch_norm = batch_norm
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
+        self.dropout_rate = dropout_rate
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm2d(64) if batch_norm else nn.Identity()
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         self.fc1 = nn.Linear(64 * 7 * 7, 128)
         self.fc2 = nn.Linear(128, num_classes)
+        self.dropout = nn.Dropout(p=dropout_rate)
         
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))  
         x = self.pool(F.relu(self.conv2(x)))  
         x = self.pool(F.relu(self.conv3(x)))  
         x = x.view(-1, 64 * 7 * 7)
+        x = self.dropout(x)
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
@@ -106,26 +105,47 @@ class ModelBenchmark:
         self.criterion = nn.CrossEntropyLoss()
 
     def train(self, train_loader, test_loader):
-        self.model.train()
+        self.model.to(DEVICE)
+        best_val_loss = float('inf')
+        patience_counter = 0
         start_time = time.time()
         
         for epoch in range(EPOCHS):
-            epoch_loss = 0
+            self.model.train()
+            running_train_loss = 0.0
             for inputs, labels in train_loader:
-                inputs = inputs.to(DEVICE)
-                labels = labels.to(DEVICE)
-                
+                inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
                 loss = self.criterion(outputs, labels)
                 loss.backward()
                 self.optimizer.step()
-                
-                epoch_loss += loss.item()
-            
-            avg_loss = epoch_loss / len(train_loader)
-            self.loss_history.append(avg_loss)
-            print(f"{self.name} - Epoch {epoch+1}/{EPOCHS}, Loss: {avg_loss:.4f}")
+                running_train_loss += loss.item()
+            train_loss = running_train_loss / len(train_loader)
+            print(f"Epoch {epoch+1}, Training Loss: {train_loss}")
+
+            self.model.eval()
+            running_val_loss = 0.0
+            with torch.no_grad():
+                for inputs, labels in test_loader:
+                    inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
+                    outputs = self.model(inputs)
+                    loss = self.criterion(outputs, labels)
+                    running_val_loss += loss.item()
+            val_loss = running_val_loss / len(test_loader)
+            self.loss_history.append(val_loss)
+            print(f"Epoch {epoch+1}, Validation Loss: {val_loss}")
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+                #torch.save(model.state_dict(), model_path)
+                #(f"Val loss improved. Saving model to: {model_path}")
+            else:
+                patience_counter += 1
+                if patience_counter >= 10:
+                    print("Early stopping!")
+                    break
 
         self.train_time = time.time() - start_time
         
@@ -153,16 +173,18 @@ class ModelBenchmark:
 
 def initialize_models():
     models_dict = {
-        "SimpleCNNBN": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=True),
+        "SimpleCNN+BN": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=True),
         "SimpleCNN": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=False),
+        "SimpleCNN+BN+Dropout": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=True, dropout_rate=0.3),
+        "SimpleCNN+Dropout": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=False, dropout_rate=0.3),
         "ResNet18": models.resnet18(num_classes=NUM_CLASSES),
-        #"EfficientNet-B0": models.efficientnet_b0(num_classes=NUM_CLASSES),
+        "EfficientNet-B0": models.efficientnet_b0(num_classes=NUM_CLASSES),
         "MobileNetV2": models.mobilenet_v2(num_classes=NUM_CLASSES),
     }
     return models_dict
 
 def plot_results(benchmarks):
-    _, ax = plt.subplots(1, 4, figsize=(18, 5))
+    _, ax = plt.subplots(1, 3, figsize=(18, 5))
     
     colors = plt.cm.Set1(np.linspace(0, 1, len(benchmarks)))
 
@@ -179,7 +201,7 @@ def plot_results(benchmarks):
     # Loss Curves
     for b, c in zip(benchmarks, colors):
         ax[2].plot(b.loss_history, label=b.name, color=c)
-    ax[2].set_title("Training Loss Curves")
+    ax[2].set_title("Val Loss")
     ax[2].legend()
     
     plt.tight_layout()
