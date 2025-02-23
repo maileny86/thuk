@@ -26,97 +26,78 @@ RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(exist_ok=True)
 # endregion
 
+
 class Arrow:
     def __init__(self, image_size: int) -> None:
         """Initialize arrow generator with image size."""
         self.image_size = image_size
-    
+
     def generate(self, angle: float):
         """Generate an arrow image."""
         img = np.zeros((self.image_size, self.image_size, 3), dtype=np.uint8)
-        
-        center, max_length = self._find_center(angle)
-        length = self._determine_length(max_length)
+        center, length = self._find_center(angle)
         start, end = self._calculate_endpoints(center, angle, length)
         return self._draw(img, start, end)
 
-    def _find_center(self, angle: float, min_len: int = 5) -> tuple:
-        """Find random center that allows arrow to fit within image"""
+    def _find_center(self, angle: float, min_length: int = 10):
+        """Find a valid center ensuring arrow fits in the image."""
         while True:
-            center = (np.random.randint(self.image_size), 
-                     np.random.randint(self.image_size))
-            max_len = self._calculate_max_lenght(center, angle)
-            if max_len >= min_len:
-                return center, max_len
+            center = np.random.randint(0, self.image_size, size=2)
+            max_length = self._max_length(center, angle)
+            if max_length >= min_length:
+                return center, np.clip(self.image_size // np.random.randint(2, 5), min_length, max_length)
 
-    def _calculate_max_lenght(self, center: tuple, angle: float) -> float:
-        """Calculate maximum possible arrow length for given center and angle"""
+    def _max_length(self, center, angle):
+        """Calculate max arrow length that fits in the image."""
         x, y = center
         rad = np.deg2rad(angle)
-        cos_θ, sin_θ = np.cos(rad), np.sin(rad)
-        max_x = min(x, self.image_size-1-x) / abs(cos_θ)
-        max_y = min(y, self.image_size-1-y) / abs(sin_θ)
-        return min(max_x, max_y)
+        max_x = (self.image_size - 1 - abs(2 * x - self.image_size)) / abs(np.cos(rad))
+        max_y = (self.image_size - 1 - abs(2 * y - self.image_size)) / abs(np.sin(rad))
+        return int(min(max_x, max_y))
 
-    def _determine_length(self, max_length: float) -> int:
-        """Generate reasonable arrow length within constraints"""
-        base_length = self.image_size // np.random.randint(2, 5)
-        return np.clip(base_length, 10, int(max_length))
-
-    def _calculate_endpoints(self, center: tuple, 
-                                 angle: float, length: int) -> tuple:
-        """Calculate and validate arrow endpoints"""
-        x, y = center
+    def _calculate_endpoints(self, center, angle, length):
+        """Calculate start and end points of the arrow."""
         rad = np.deg2rad(angle)
-        dx = length * np.cos(rad)
-        dy = length * np.sin(rad)
-        
-        start = self._clamp_coordinates((x - dx, y - dy))
-        end = self._clamp_coordinates((x + dx, y + dy))
-        return start, end
+        delta = np.array([length * np.cos(rad), length * np.sin(rad)])
+        return tuple(np.clip(center - delta, 0, self.image_size - 1).astype(int)), \
+               tuple(np.clip(center + delta, 0, self.image_size - 1).astype(int))
 
-    def _clamp_coordinates(self, point: tuple) -> tuple:
-        """Ensure coordinates stay within image boundaries"""
-        x, y = point
-        return (
-            int(np.clip(round(x), 0, self.image_size-1)),
-            int(np.clip(round(y), 0, self.image_size-1))
-        )
-
-    def _draw(self, img: np.ndarray, start: tuple, end: tuple):
-        """Draw arrow on image with random visual properties"""
-        color = tuple(np.random.randint(30, 255, 3).tolist())
+    def _draw(self, img, start, end):
+        """Draw an arrow with random properties."""
+        color = tuple(np.random.randint(10, 255, size=3).tolist())
         thickness = np.random.randint(1, 5)
         tip_length = np.random.uniform(0.1, 0.5)
         return cv2.arrowedLine(img, start, end, color, thickness, tipLength=tip_length)
 
+
 class ArrowsDataset(Dataset):
-    def __init__(self, num_samples: int, image_size: int, num_classes: int) -> None:
+    def __init__(self, num_samples: int, image_size: int, num_classes: int, visualize=False) -> None:
         self.num_samples = num_samples
         self.image_size = image_size
         self.num_classes = num_classes
         self.angle_step = 360 // num_classes
-        self.data, self.labels = self._create_dataset()
-    
-    def _create_dataset(self):
-        data = []
-        labels = []
-        arrows = []
-        for _ in range(self.num_samples):
-            angle_idx = np.random.randint(self.num_classes)
-            angle = angle_idx * self.angle_step + np.random.randint(-self.angle_step//2, self.angle_step//2)
-            arrow = Arrow(self.image_size).generate(angle)
-            arrows.append(arrow)
-            img_tensor = torch.tensor(arrow, dtype=torch.float32).permute(2, 0, 1) / 255.0
-            data.append(img_tensor)
-            labels.append(angle_idx)
-        return torch.stack(data), torch.LongTensor(labels)
-    
+        self.data, self.labels = self._create_dataset(visualize)
+
+    def _create_dataset(self, visualize):
+        angles = np.random.randint(-self.angle_step // 2, self.angle_step // 2, self.num_samples) + \
+                 np.arange(self.num_samples) % self.num_classes * self.angle_step
+        
+        arrows = [Arrow(self.image_size).generate(angle) for angle in angles]
+
+        if visualize:
+            plot_arrows(arrows, num_cols=10, num_rows=5)
+
+        data = torch.stack([torch.tensor(img, dtype=torch.float32).permute(2, 0, 1) / 255.0 for img in arrows])
+        labels = torch.LongTensor(np.arange(self.num_samples) % self.num_classes)
+
+        return data, labels
+
     def __len__(self):
         return self.num_samples
-    
+
     def __getitem__(self, idx):
         return self.data[idx], self.labels[idx]
+
 
 class SimpleCNN(nn.Module):
     def __init__(self, num_classes, image_size=56, batch_norm=False, dropout_rate=0.0):
@@ -157,14 +138,14 @@ class ModelBenchmark:
         self.model = model.to(DEVICE)
         self.name = name
         self.train_time = 0.0
-        self.accuracy = 0.0
+        self.best_accuracy = 0.0
         self.loss_history = []
         self.optimizer = optim.Adam(model.parameters())
         self.criterion = nn.CrossEntropyLoss()
 
     def train(self, train_loader, test_loader):
         best_loss = float('inf')
-        model_path = RESULTS_DIR/f"{self.name}.pth"
+        model_path = RESULTS_DIR/f"{self.name}_{NUM_CLASSES}.pth"
         start_time = time.time()
         
         for epoch in range(EPOCHS):
@@ -179,9 +160,10 @@ class ModelBenchmark:
                 best_loss = val_loss
                 torch.save(self.model.state_dict(), model_path)
                 print(f"Saved {self.name} to {model_path}")
+                self.best_accuracy = self.evaluate(test_loader)
         
         self.train_time = time.time() - start_time
-        self.accuracy = self.evaluate(test_loader)
+        
     
     def _run_epoch(self, loader, training=True):
         self.model.train(training)
@@ -216,7 +198,6 @@ def initialize_models():
     return {
         "SimpleCNN": SimpleCNN(NUM_CLASSES, IMG_SIZE),
         "SimpleCNN+BN": SimpleCNN(NUM_CLASSES, IMG_SIZE, batch_norm=True),
-        "SimpleCNN+DO": SimpleCNN(NUM_CLASSES, IMG_SIZE, dropout_rate=0.3),
         "ResNet18": models.resnet18(num_classes=NUM_CLASSES),
         "EfficientNet-B0": models.efficientnet_b0(num_classes=NUM_CLASSES),
         "MobileNetV2": models.mobilenet_v2(num_classes=NUM_CLASSES),
@@ -234,7 +215,7 @@ def plot_results(benchmarks):
     
     # Accuracy
     plt.subplot(132)
-    plt.bar([b.name for b in benchmarks], [b.accuracy for b in benchmarks], color=colors)
+    plt.bar([b.name for b in benchmarks], [b.best_accuracy for b in benchmarks], color=colors)
     plt.ylim(0, 1)
     plt.title("Test Accuracy")
     
@@ -249,8 +230,37 @@ def plot_results(benchmarks):
     plt.savefig(RESULTS_DIR/"results.png")
     plt.show()
 
+def plot_arrows(imgs, num_rows=1, num_cols=5):
+    """
+    Plot arrows in a grid layout with specified rows and columns
+    """
+    imgs = random.choices(imgs, k=num_cols*num_rows)
+    fig, axes = plt.subplots(num_rows, num_cols, 
+                            figsize=(3*num_cols, 3*num_rows))
+    
+    # Handle single row case
+    if num_rows == 1:
+        axes = axes.reshape(1, -1)
+    
+    # Plot images
+    for idx in range(len(imgs)):
+        img = imgs[idx]
+        row = idx // num_cols
+        col = idx % num_cols
+        axes[row, col].imshow(img)
+        axes[row, col].axis("off")
+    
+    # Turn off empty subplots
+    for idx in range(len(imgs), num_rows*num_cols):
+        row = idx // num_cols
+        col = idx % num_cols
+        axes[row, col].axis("off")
+    
+    plt.tight_layout()
+    plt.show()
+
 def main():
-    train_set = ArrowsDataset(NUM_SAMPLES, IMG_SIZE, NUM_CLASSES)
+    train_set = ArrowsDataset(NUM_SAMPLES, IMG_SIZE, NUM_CLASSES, visualize=True)
     test_set = ArrowsDataset(NUM_SAMPLES//5, IMG_SIZE, NUM_CLASSES)
     
     benchmarks = []
@@ -265,7 +275,7 @@ def main():
             DataLoader(test_set, BATCH_SIZE)
         )
         benchmarks.append(benchmark)
-        print(f"{name} Accuracy: {benchmark.accuracy:.2%}")
+        print(f"{name} Accuracy: {benchmark.best_accuracy:.2%}")
     
     plot_results(benchmarks)
 
