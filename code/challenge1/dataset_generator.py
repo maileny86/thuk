@@ -12,246 +12,262 @@ from sklearn.metrics import accuracy_score
 from pathlib import Path
 import numpy as np
 import gc
-import pandas as pd
-import torch.nn.functional as F
+import random
 import cv2
 
 # region constants
-NUM_CLASSES: int = 8
-NUM_SAMPLES: int = 1000
-IMG_SIZE: int = 56
-BATCH_SIZE: int = 32
-EPOCHS: int = 10
-DEVICE: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RESULTS_DIR: Path = Path("results")
+NUM_CLASSES = 8
+NUM_SAMPLES = 1000
+IMG_SIZE = 56
+BATCH_SIZE = 32
+EPOCHS = 20
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+RESULTS_DIR = Path("results")
+RESULTS_DIR.mkdir(exist_ok=True)
 # endregion
+
+class Arrow:
+    def __init__(self, image_size: int) -> None:
+        """Initialize arrow generator with image size."""
+        self.image_size = image_size
     
-class ArrowDataset(Dataset):
-    def __init__(self, num_samples, image_size, num_classes, transform=None):
+    def generate(self, angle: float):
+        """Generate an arrow image."""
+        img = np.zeros((self.image_size, self.image_size, 3), dtype=np.uint8)
+        
+        center, max_length = self._find_center(angle)
+        length = self._determine_length(max_length)
+        start, end = self._calculate_endpoints(center, angle, length)
+        return self._draw(img, start, end)
+
+    def _find_center(self, angle: float, min_len: int = 5) -> tuple:
+        """Find random center that allows arrow to fit within image"""
+        while True:
+            center = (np.random.randint(self.image_size), 
+                     np.random.randint(self.image_size))
+            max_len = self._calculate_max_lenght(center, angle)
+            if max_len >= min_len:
+                return center, max_len
+
+    def _calculate_max_lenght(self, center: tuple, angle: float) -> float:
+        """Calculate maximum possible arrow length for given center and angle"""
+        x, y = center
+        rad = np.deg2rad(angle)
+        cos_θ, sin_θ = np.cos(rad), np.sin(rad)
+        max_x = min(x, self.image_size-1-x) / abs(cos_θ)
+        max_y = min(y, self.image_size-1-y) / abs(sin_θ)
+        return min(max_x, max_y)
+
+    def _determine_length(self, max_length: float) -> int:
+        """Generate reasonable arrow length within constraints"""
+        base_length = self.image_size // np.random.randint(2, 5)
+        return np.clip(base_length, 10, int(max_length))
+
+    def _calculate_endpoints(self, center: tuple, 
+                                 angle: float, length: int) -> tuple:
+        """Calculate and validate arrow endpoints"""
+        x, y = center
+        rad = np.deg2rad(angle)
+        dx = length * np.cos(rad)
+        dy = length * np.sin(rad)
+        
+        start = self._clamp_coordinates((x - dx, y - dy))
+        end = self._clamp_coordinates((x + dx, y + dy))
+        return start, end
+
+    def _clamp_coordinates(self, point: tuple) -> tuple:
+        """Ensure coordinates stay within image boundaries"""
+        x, y = point
+        return (
+            int(np.clip(round(x), 0, self.image_size-1)),
+            int(np.clip(round(y), 0, self.image_size-1))
+        )
+
+    def _draw(self, img: np.ndarray, start: tuple, end: tuple):
+        """Draw arrow on image with random visual properties"""
+        color = tuple(np.random.randint(30, 255, 3).tolist())
+        thickness = np.random.randint(1, 5)
+        tip_length = np.random.uniform(0.1, 0.5)
+        return cv2.arrowedLine(img, start, end, color, thickness, tipLength=tip_length)
+
+class ArrowsDataset(Dataset):
+    def __init__(self, num_samples: int, image_size: int, num_classes: int) -> None:
         self.num_samples = num_samples
         self.image_size = image_size
         self.num_classes = num_classes
-        self.transform = transform
         self.angle_step = 360 // num_classes
-        self.data, self.labels = self._generate_dataset()
+        self.data, self.labels = self._create_dataset()
     
-    def _generate_arrow(self, angle):
-        img = np.zeros((self.image_size, self.image_size, 3), dtype=np.uint8)
-        center = (self.image_size // 2, self.image_size // 2)
-        lenght = self.image_size // np.random.randint(1, 5)
-        rad = np.deg2rad(angle)
-        start = (center[0] - int(lenght * np.cos(rad)), center[1] - int(lenght * np.sin(rad)))
-        end = (center[0] + int(lenght * np.cos(rad)), center[1] + int(lenght * np.sin(rad)))
-        arrow_color = tuple(np.random.randint(30, 255, 3).tolist())
-        tip_length = np.random.uniform(0.1, 0.5)
-        arrow_thickness = np.random.randint(1, 5)
-        cv2.arrowedLine(img, start, end, arrow_color, arrow_thickness, tipLength=tip_length)
-        return torch.tensor(img, dtype=torch.float32).permute(2, 0, 1) / 255.0
-    
-    def _generate_dataset(self):
-        data = torch.zeros((self.num_samples, 3, self.image_size, self.image_size))
-        labels = torch.zeros(self.num_samples, dtype=torch.long)
-        for i in range(self.num_samples):
-            angle_index = np.random.randint(0, self.num_classes)
-            angle = (angle_index * self.angle_step) + np.random.randint(-(self.angle_step//2), self.angle_step//2)
-            data[i] = self._generate_arrow(angle)
-            labels[i] = angle_index
-        return data, labels
+    def _create_dataset(self):
+        data = []
+        labels = []
+        arrows = []
+        for _ in range(self.num_samples):
+            angle_idx = np.random.randint(self.num_classes)
+            angle = angle_idx * self.angle_step + np.random.randint(-self.angle_step//2, self.angle_step//2)
+            arrow = Arrow(self.image_size).generate(angle)
+            arrows.append(arrow)
+            img_tensor = torch.tensor(arrow, dtype=torch.float32).permute(2, 0, 1) / 255.0
+            data.append(img_tensor)
+            labels.append(angle_idx)
+        return torch.stack(data), torch.LongTensor(labels)
     
     def __len__(self):
         return self.num_samples
     
-    def __getitem__(self, index):
-        image, label = self.data[index], self.labels[index]
-        if self.transform:
-            image = self.transform(image)   
-        return image, label
-
+    def __getitem__(self, idx):
+        return self.data[idx], self.labels[idx]
 
 class SimpleCNN(nn.Module):
-    def __init__(self, num_classes=10, batch_norm=False, dropout_rate=0.0):
-        super(SimpleCNN, self).__init__()
-        self.batch_norm = batch_norm
-        self.dropout_rate = dropout_rate
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(64) if batch_norm else nn.Identity()
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.fc1 = nn.Linear(64 * 7 * 7, 128)
-        self.fc2 = nn.Linear(128, num_classes)
-        self.dropout = nn.Dropout(p=dropout_rate)
+    def __init__(self, num_classes, image_size=56, batch_norm=False, dropout_rate=0.0):
+        super().__init__()
+        layers = [
+            nn.Conv2d(3, 16, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(16, 32, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1),
+        ]
+        if batch_norm:
+            layers.append(nn.BatchNorm2d(64))
+        layers += [nn.ReLU(), nn.MaxPool2d(2)]
         
+        self.features = nn.Sequential(*layers)
+        
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, image_size, image_size)
+            self.feature_size = self.features(dummy).view(1, -1).size(1)
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(self.feature_size, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(128, num_classes)
+        )
+
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))  
-        x = self.pool(F.relu(self.conv2(x)))  
-        x = self.pool(F.relu(self.conv3(x)))  
-        x = x.view(-1, 64 * 7 * 7)
-        x = self.dropout(x)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        return self.classifier(x)
 
-
-# Model Benchmarking Class
 class ModelBenchmark:
     def __init__(self, model, name):
         self.model = model.to(DEVICE)
         self.name = name
-        self.train_time = 0
-        self.accuracy = 0
+        self.train_time = 0.0
+        self.accuracy = 0.0
         self.loss_history = []
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+        self.optimizer = optim.Adam(model.parameters())
         self.criterion = nn.CrossEntropyLoss()
 
     def train(self, train_loader, test_loader):
-        self.model.to(DEVICE)
-        best_val_loss = float('inf')
-        patience_counter = 0
+        best_loss = float('inf')
+        model_path = RESULTS_DIR/f"{self.name}.pth"
         start_time = time.time()
         
         for epoch in range(EPOCHS):
-            self.model.train()
-            running_train_loss = 0.0
-            for inputs, labels in train_loader:
+            train_loss = self._run_epoch(train_loader, training=True)
+            val_loss = self._run_epoch(test_loader, training=False)
+            self.loss_history.append(val_loss)
+            
+            print(f"Epoch {epoch+1}/{EPOCHS} | "
+                  f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+            
+            if val_loss < best_loss:
+                best_loss = val_loss
+                torch.save(self.model.state_dict(), model_path)
+                print(f"Saved {self.name} to {model_path}")
+        
+        self.train_time = time.time() - start_time
+        self.accuracy = self.evaluate(test_loader)
+    
+    def _run_epoch(self, loader, training=True):
+        self.model.train(training)
+        total_loss = 0.0
+        
+        with torch.set_grad_enabled(training):
+            for inputs, labels in loader:
                 inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-                self.optimizer.zero_grad()
                 outputs = self.model(inputs)
                 loss = self.criterion(outputs, labels)
-                loss.backward()
-                self.optimizer.step()
-                running_train_loss += loss.item()
-            train_loss = running_train_loss / len(train_loader)
-            print(f"Epoch {epoch+1}, Training Loss: {train_loss}")
-
-            self.model.eval()
-            running_val_loss = 0.0
-            with torch.no_grad():
-                for inputs, labels in test_loader:
-                    inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-                    outputs = self.model(inputs)
-                    loss = self.criterion(outputs, labels)
-                    running_val_loss += loss.item()
-            val_loss = running_val_loss / len(test_loader)
-            self.loss_history.append(val_loss)
-            print(f"Epoch {epoch+1}, Validation Loss: {val_loss}")
-
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                patience_counter = 0
-                #torch.save(model.state_dict(), model_path)
-                #(f"Val loss improved. Saving model to: {model_path}")
-            else:
-                patience_counter += 1
-                if patience_counter >= 10:
-                    print("Early stopping!")
-                    break
-
-        self.train_time = time.time() - start_time
+                
+                if training:
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+                
+                total_loss += loss.item() * inputs.size(0)
         
-        # Evaluate after training
-        self.accuracy = self.evaluate(test_loader)
-        
+        return total_loss / len(loader.dataset)
+
     def evaluate(self, test_loader):
+        all_preds, all_labels = [], []
         self.model.eval()
-        all_preds = []
-        all_labels = []
-        
         with torch.no_grad():
             for inputs, labels in test_loader:
-                inputs = inputs.to(DEVICE)
-                labels = labels.to(DEVICE)
-                
-                outputs = self.model(inputs)
-                _, preds = torch.max(outputs, 1)
-                
-                all_preds.extend(preds.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
-        
+                outputs = self.model(inputs.to(DEVICE))
+                all_preds.extend(torch.argmax(outputs, 1).cpu().numpy())
+                all_labels.extend(labels.numpy())
         return accuracy_score(all_labels, all_preds)
-    
 
 def initialize_models():
-    models_dict = {
-        "SimpleCNN+BN": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=True),
-        "SimpleCNN": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=False),
-        "SimpleCNN+BN+Dropout": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=True, dropout_rate=0.3),
-        "SimpleCNN+Dropout": SimpleCNN(num_classes=NUM_CLASSES, batch_norm=False, dropout_rate=0.3),
+    return {
+        "SimpleCNN": SimpleCNN(NUM_CLASSES, IMG_SIZE),
+        "SimpleCNN+BN": SimpleCNN(NUM_CLASSES, IMG_SIZE, batch_norm=True),
+        "SimpleCNN+DO": SimpleCNN(NUM_CLASSES, IMG_SIZE, dropout_rate=0.3),
         "ResNet18": models.resnet18(num_classes=NUM_CLASSES),
         "EfficientNet-B0": models.efficientnet_b0(num_classes=NUM_CLASSES),
         "MobileNetV2": models.mobilenet_v2(num_classes=NUM_CLASSES),
     }
-    return models_dict
 
 def plot_results(benchmarks):
-    _, ax = plt.subplots(1, 3, figsize=(18, 5))
-    
-    colors = plt.cm.Set1(np.linspace(0, 1, len(benchmarks)))
+    plt.figure(figsize=(18, 5))
 
-    ax[0].bar([b.name for b in benchmarks], [b.train_time for b in benchmarks], color=colors)
-    ax[0].set_title("Training Time")
-    ax[0].set_ylabel("Seconds")
+    colors = plt.cm.Set1(np.linspace(0, 1, len(benchmarks)))
+    
+    # Training Time
+    plt.subplot(131)
+    plt.bar([b.name for b in benchmarks], [b.train_time for b in benchmarks], color=colors)
+    plt.title("Training Time (s)")
     
     # Accuracy
-    ax[1].bar([b.name for b in benchmarks], [b.accuracy for b in benchmarks], color=colors)
-    ax[1].set_title("Test Accuracy")
-    ax[1].set_ylim(0, 1)
-
+    plt.subplot(132)
+    plt.bar([b.name for b in benchmarks], [b.accuracy for b in benchmarks], color=colors)
+    plt.ylim(0, 1)
+    plt.title("Test Accuracy")
     
-    # Loss Curves
+    # Loss History
+    plt.subplot(133)
     for b, c in zip(benchmarks, colors):
-        ax[2].plot(b.loss_history, label=b.name, color=c)
-    ax[2].set_title("Val Loss")
-    ax[2].legend()
+        plt.plot(b.loss_history, label=b.name, color=c)
+    plt.title("Validation Loss")
+    plt.legend()
     
     plt.tight_layout()
-    plt.savefig(RESULTS_DIR / "benchmark_results.png")
+    plt.savefig(RESULTS_DIR/"results.png")
     plt.show()
 
-# Main Benchmarking Workflow
 def main():
-    # Setup directories
-    RESULTS_DIR.mkdir(exist_ok=True)
+    train_set = ArrowsDataset(NUM_SAMPLES, IMG_SIZE, NUM_CLASSES)
+    test_set = ArrowsDataset(NUM_SAMPLES//5, IMG_SIZE, NUM_CLASSES)
     
-    # Generate data
-    train_dataset = ArrowDataset(NUM_SAMPLES, IMG_SIZE, NUM_CLASSES)
-    test_dataset = ArrowDataset(NUM_SAMPLES // 5, IMG_SIZE, NUM_CLASSES)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
-    
-    # Initialize models
-    models_dict = initialize_models()
-    
-    # Run benchmarks
-    benchmarks: list[ModelBenchmark] = []
-    for name, model in models_dict.items():
-        print(f"\nBenchmarking {name}...")
-        
-        # Force garbage collection
+    benchmarks = []
+    for name, model in initialize_models().items():
         gc.collect()
         torch.cuda.empty_cache()
         
-        # Run benchmark
+        print(f"\nTraining {name}")
         benchmark = ModelBenchmark(model, name)
-        benchmark.train(train_loader, test_loader)
+        benchmark.train(
+            DataLoader(train_set, BATCH_SIZE, shuffle=True),
+            DataLoader(test_set, BATCH_SIZE)
+        )
         benchmarks.append(benchmark)
-        
-        # Print results
-        print(f"{name} Results:")
-        print(f"Training Time: {benchmark.train_time:.2f}s")
-        print(f"Test Accuracy: {benchmark.accuracy:.4f}\n")
+        print(f"{name} Accuracy: {benchmark.accuracy:.2%}")
     
-    # Save and plot results
     plot_results(benchmarks)
-    
-    # Save numerical results
-    results = [{
-        "Model": b.name,
-        "Training Time": b.train_time,
-        "Accuracy": b.accuracy
-    } for b in benchmarks]
-    
-    pd.DataFrame(results).to_csv(RESULTS_DIR / "benchmark_results.csv", index=False)
 
 if __name__ == "__main__":
     main()
