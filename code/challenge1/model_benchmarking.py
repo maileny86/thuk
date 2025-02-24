@@ -1,19 +1,21 @@
 """Challenge 1 - Data generation and models benchmarking.
 Author: Milena Napiorkowska.
 """
+import gc
+import random
 import time
+from pathlib import Path
+from typing import Self
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import models
-import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score
-from pathlib import Path
-import numpy as np
-import gc
-import random
-import cv2
+from torch.utils.data import DataLoader, Dataset
+from torchvision import models
 
 # region constants
 NUM_CLASSES = 8
@@ -28,26 +30,27 @@ RESULTS_DIR.mkdir(exist_ok=True)
 
 
 class Arrow:
-    def __init__(self, image_size: int) -> None:
+    """Arrow image generator."""
+    def __init__(self: Self, image_size: int) -> None:
         """Initialize arrow generator with image size."""
         self.image_size = image_size
 
-    def generate(self, angle: float):
-        """Generate an arrow image."""
-        img = np.zeros((self.image_size, self.image_size, 3), dtype=np.uint8)
+    def generate(self: Self, angle: int) -> np.ndarray:
+        """Generate an arrow image with angle."""
+        image = np.zeros((self.image_size, self.image_size, 3), dtype=np.uint8)
         center, length = self._find_center(angle)
         start, end = self._calculate_endpoints(center, angle, length)
-        return self._draw(img, start, end)
+        return self._draw(image, start, end)
 
-    def _find_center(self, angle: float, min_length: int = 10):
+    def _find_center(self: Self, angle: int, min_length: int = 10) -> tuple[tuple[int, int], int]:
         """Find a valid center ensuring arrow fits in the image."""
         while True:
-            center = np.random.randint(0, self.image_size, size=2)
+            center = tuple(int(v) for v in np.random.randint(0, self.image_size, size=2))
             max_length = self._max_length(center, angle)
             if max_length >= min_length:
-                return center, np.clip(self.image_size // np.random.randint(2, 5), min_length, max_length)
-
-    def _max_length(self, center, angle):
+                lenght = int(np.clip(self.image_size // np.random.randint(2, 5), min_length, max_length))
+                return center, lenght
+    def _max_length(self: Self, center: tuple[int, int], angle: int) -> int:
         """Calculate max arrow length that fits in the image."""
         x, y = center
         rad = np.deg2rad(angle)
@@ -55,32 +58,34 @@ class Arrow:
         max_y = (self.image_size - 1 - abs(2 * y - self.image_size)) / abs(np.sin(rad))
         return int(min(max_x, max_y))
 
-    def _calculate_endpoints(self, center, angle, length):
+    def _calculate_endpoints(self: Self, center: np.ndarray, angle: int, length: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
         """Calculate start and end points of the arrow."""
         rad = np.deg2rad(angle)
         delta = np.array([length * np.cos(rad), length * np.sin(rad)])
-        return tuple(np.clip(center - delta, 0, self.image_size - 1).astype(int)), \
-               tuple(np.clip(center + delta, 0, self.image_size - 1).astype(int))
-
-    def _draw(self, img, start, end):
+        start = tuple(map(int, (max(0, min(self.image_size - 1, c - d)) for c, d in zip(center, delta))))
+        end = tuple(map(int, (max(0, min(self.image_size - 1, c + d)) for c, d in zip(center, delta))))
+        return start, end
+    
+    def _draw(self: Self, img: np.ndarray, start: tuple[int, int], end: tuple[int, int]) -> np.ndarray:
         """Draw an arrow with random properties."""
-        color = tuple(np.random.randint(10, 255, size=3).tolist())
+        color = tuple(map(int, np.random.randint(10, 255, size=3)))
         thickness = np.random.randint(1, 5)
         tip_length = np.random.uniform(0.1, 0.5)
         return cv2.arrowedLine(img, start, end, color, thickness, tipLength=tip_length)
 
 
 class ArrowsDataset(Dataset):
-    def __init__(self, num_samples: int, image_size: int, num_classes: int, visualize=False) -> None:
+    """Arrows dataset generator."""
+    def __init__(self: Self, num_samples: int, image_size: int, num_classes: int, visualize : bool = False) -> None:
         self.num_samples = num_samples
         self.image_size = image_size
         self.num_classes = num_classes
         self.angle_step = 360 // num_classes
         self.data, self.labels = self._create_dataset(visualize)
 
-    def _create_dataset(self, visualize):
-        angles = np.random.randint(-self.angle_step // 2, self.angle_step // 2, self.num_samples) + \
-                 np.arange(self.num_samples) % self.num_classes * self.angle_step
+    def _create_dataset(self: Self, visualize: bool):
+        angles = (np.random.randint(-self.angle_step // 2, self.angle_step // 2, self.num_samples) + \
+                 np.arange(self.num_samples) % self.num_classes * self.angle_step).tolist()
         
         arrows = [Arrow(self.image_size).generate(angle) for angle in angles]
 
@@ -92,15 +97,16 @@ class ArrowsDataset(Dataset):
 
         return data, labels
 
-    def __len__(self):
+    def __len__(self: Self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx):
+    def __getitem__(self: Self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         return self.data[idx], self.labels[idx]
 
 
 class SimpleCNN(nn.Module):
-    def __init__(self, num_classes, image_size=56, batch_norm=False, dropout_rate=0.0):
+    """Simple CNN model."""
+    def __init__(self: Self, num_classes, image_size=56, batch_norm=False, dropout_rate=0.0):
         super().__init__()
         layers = [
             nn.Conv2d(3, 16, 3, padding=1),
@@ -128,26 +134,29 @@ class SimpleCNN(nn.Module):
             nn.Linear(128, num_classes)
         )
 
-    def forward(self, x):
+    def forward(self: Self, x):
+        """Forward pass of the model."""
         x = self.features(x)
         x = x.view(x.size(0), -1)
         return self.classifier(x)
 
 class ModelBenchmark:
-    def __init__(self, model, name):
+    """Model benchmarking class."""
+    def __init__(self: Self, model: nn.Module, name: str) -> None:
         self.model = model.to(DEVICE)
         self.name = name
         self.train_time = 0.0
         self.best_accuracy = 0.0
-        self.loss_history = []
+        self.loss_history: list[float] = []
         self.optimizer = optim.Adam(model.parameters())
         self.criterion = nn.CrossEntropyLoss()
 
-    def train(self, train_loader, test_loader):
+    def train(self: Self, train_loader: DataLoader, test_loader: DataLoader) -> None:
+        """Train model on training set and validate on test set."""
         best_loss = float('inf')
         model_path = RESULTS_DIR/f"{self.name}_{NUM_CLASSES}.pth"
         start_time = time.time()
-        
+
         for epoch in range(EPOCHS):
             train_loss = self._run_epoch(train_loader, training=True)
             val_loss = self._run_epoch(test_loader, training=False)
@@ -165,7 +174,7 @@ class ModelBenchmark:
         self.train_time = time.time() - start_time
         
     
-    def _run_epoch(self, loader, training=True):
+    def _run_epoch(self: Self, loader: DataLoader, training: bool = True) -> float:
         self.model.train(training)
         total_loss = 0.0
         
@@ -184,8 +193,10 @@ class ModelBenchmark:
         
         return total_loss / len(loader.dataset)
 
-    def evaluate(self, test_loader):
-        all_preds, all_labels = [], []
+    def evaluate(self: Self, test_loader: DataLoader) -> float:
+        """Evaluate model on test set."""
+        all_preds: list[np.ndarray] = []
+        all_labels: list[np.ndarray] = []
         self.model.eval()
         with torch.no_grad():
             for inputs, labels in test_loader:
@@ -194,7 +205,8 @@ class ModelBenchmark:
                 all_labels.extend(labels.numpy())
         return accuracy_score(all_labels, all_preds)
 
-def initialize_models():
+def initialize_models() -> dict[str, nn.Module]:
+    """Initialize models for benchmarking."""
     return {
         "SimpleCNN": SimpleCNN(NUM_CLASSES, IMG_SIZE),
         "SimpleCNN+BN": SimpleCNN(NUM_CLASSES, IMG_SIZE, batch_norm=True),
@@ -203,7 +215,7 @@ def initialize_models():
         "MobileNetV2": models.mobilenet_v2(num_classes=NUM_CLASSES),
     }
 
-def plot_results(benchmarks):
+def plot_results(benchmarks) -> None:
     plt.figure(figsize=(18, 5))
 
     colors = plt.cm.Set1(np.linspace(0, 1, len(benchmarks)))
@@ -230,12 +242,12 @@ def plot_results(benchmarks):
     plt.savefig(RESULTS_DIR/"results.png")
     plt.show()
 
-def plot_arrows(imgs, num_rows=1, num_cols=5):
+def plot_arrows(imgs: list[np.ndarray], num_rows: int = 1, num_cols: int = 5) -> None:
     """
     Plot arrows in a grid layout with specified rows and columns
     """
     imgs = random.choices(imgs, k=num_cols*num_rows)
-    fig, axes = plt.subplots(num_rows, num_cols, 
+    _, axes = plt.subplots(num_rows, num_cols, 
                             figsize=(3*num_cols, 3*num_rows))
     
     # Handle single row case
@@ -260,14 +272,14 @@ def plot_arrows(imgs, num_rows=1, num_cols=5):
     plt.show()
 
 def main():
+    """Main function to generate dataset and train models."""
     train_set = ArrowsDataset(NUM_SAMPLES, IMG_SIZE, NUM_CLASSES, visualize=True)
     test_set = ArrowsDataset(NUM_SAMPLES//5, IMG_SIZE, NUM_CLASSES)
     
     benchmarks = []
     for name, model in initialize_models().items():
         gc.collect()
-        torch.cuda.empty_cache()
-        
+        torch.cuda.empty_cache()   
         print(f"\nTraining {name}")
         benchmark = ModelBenchmark(model, name)
         benchmark.train(
@@ -275,9 +287,9 @@ def main():
             DataLoader(test_set, BATCH_SIZE)
         )
         benchmarks.append(benchmark)
-        print(f"{name} Accuracy: {benchmark.best_accuracy:.2%}")
-    
+        print(f"{name} Accuracy: {benchmark.best_accuracy:.2%}")   
     plot_results(benchmarks)
 
 if __name__ == "__main__":
     main()
+
