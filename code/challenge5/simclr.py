@@ -20,15 +20,15 @@ from PIL import Image
 
 # region constatants
 CLASS_MAPPING: dict[str, int] = {"chinchilla": 0, "hamster": 1, "rabbit": 2}
-EPOCHS = 2
-BATCH_SIZE = 128
+EPOCHS = 20
+BATCH_SIZE = 258
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RESULTS_DIR = Path(Path(os.path.realpath(__file__)).parent) / "outputs"
 RESULTS_DIR.mkdir(exist_ok=True)
 # endregion
 
 def split_images_to_train_and_val(
-    data_dir: Path, ratio: float = 0.8, seed: int = 42
+    data_dir: Path, ratio: float = 0.7, seed: int = 42
 ) -> tuple[list[Path], list[Path]]:
     """
     Splits images into training and validation sets.
@@ -236,7 +236,7 @@ def main(data_dir: Path, model_name: str) -> None:
         ], p=0.8),
         transforms.RandomGrayscale(p=0.2),
         transforms.RandomApply([
-            transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0))
+            transforms.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 2.0))
         ], p=0.5),
         transforms.RandomApply([transforms.RandomSolarize(threshold=192)], p=0.1),
         transforms.ToTensor(),
@@ -256,16 +256,16 @@ def main(data_dir: Path, model_name: str) -> None:
     val_dataset = RodentsDataset(val_images, transform=val_transforms)
 
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
 
-    model = SimCLR(models.resnet50(pretrained=True)).to(DEVICE)
+    model = SimCLR(models.resnet18(pretrained=True)).to(DEVICE)
 
     trainer = SimCLRTrainer(model, train_loader, val_loader)
     model_path = RESULTS_DIR / f"{model_name}.pt"
     trainer.train(model_path)
 
-    extractor = EmbeddingExtractor(model, val_loader)
+    extractor = EmbeddingExtractor(model, train_loader)
     embeddings, labels = extractor.extract()
 
     TSNEVisualizer.plot(embeddings, labels, list(CLASS_MAPPING.keys()))
