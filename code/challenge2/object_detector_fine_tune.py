@@ -2,15 +2,15 @@
 Author: Milena Napiorkowska
 """
 from pathlib import Path
+from typing import Self
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as transforms
 import torchvision.models as models
 from PIL import Image
-import torch.nn as nn
 import pandas as pd
 import typer
-from typing import Self
 from sklearn.metrics import classification_report
 
 # region constants
@@ -46,7 +46,7 @@ class RodentsDataset(Dataset):
         return image, label
 
 # region private
-def _get_resnet(num_classes: int) -> nn.Module: 
+def _get_resnet(num_classes: int) -> nn.Module:
     """Get a ResNet model with a custom head."""
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     in_features = model.fc.in_features
@@ -110,25 +110,25 @@ def _train_model(
 
 def _evaluate_model(model: nn.Module, model_path: Path, dataloader: DataLoader) -> None:
     model.load_state_dict(torch.load(model_path))
-    model.to(DEVICE)  
+    model.to(DEVICE)
     model.eval()
-    y_true: list[int] = [] 
+    y_true: list[int] = []
     y_pred: list[int] = []
     with torch.no_grad():
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
             outputs = model(inputs)
             _, predicted = torch.max(outputs, 1)
-            y_true.extend(labels.cpu().numpy()) 
+            y_true.extend(labels.cpu().numpy())
             y_pred.extend(predicted.cpu().numpy())
     print(classification_report(y_true, y_pred, target_names=CLASS_MAPPING.keys()))
 # endregion
 
 @app.command()
 def train(
-    dataset_path: Path, 
-    train_annotation_file: Path, 
-    val_annotation_file: Path, 
+    dataset_path: Path,
+    train_annotation_file: Path,
+    val_annotation_file: Path,
     model_path: Path,
     num_epochs: int) -> None:
     """Train a model to classify rodent images."""
@@ -146,31 +146,31 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=0.00001, weight_decay=1e-4)
 
     _train_model(
-        model, 
-        train_loader, 
-        val_loader, 
-        criterion, 
-        optimizer, 
-        num_epochs=num_epochs, 
-        patience=5, 
+        model,
+        train_loader,
+        val_loader,
+        criterion,
+        optimizer,
+        num_epochs=num_epochs,
+        patience=5,
         model_path=model_path)
 
-@app.command()  
+@app.command()
 def eval(dataset_path: Path, test_annotation_file: Path, model_path: Path) -> None:
     """Evaluate a trained model on the test dataset."""
     if not model_path.exists():
         raise FileNotFoundError(f"Model file {model_path} not found.")
-    
+
     # Load test dataset
     dataset = RodentsDataset(test_annotation_file, dataset_path, transform=TRANSFORM)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     # Load model
     model = _get_resnet(num_classes=len(CLASS_MAPPING))
-    model.to(DEVICE)  
+    model.to(DEVICE)
 
     # Evaluate model
     _evaluate_model(model, model_path, dataloader)
 
 if __name__ == "__main__":
-    app()  
+    app()
