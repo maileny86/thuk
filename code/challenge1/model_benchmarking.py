@@ -25,7 +25,7 @@ IMG_SIZE = 56
 BATCH_SIZE = 32
 EPOCHS = 20
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RESULTS_DIR = Path(Path(os.path.realpath(__file__)).parent) / "outputs"
+RESULTS_DIR = Path(__file__).resolve().parent / "outputs"
 RESULTS_DIR.mkdir(exist_ok=True)
 # endregion
 

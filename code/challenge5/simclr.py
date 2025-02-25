@@ -23,7 +23,7 @@ CLASS_MAPPING: dict[str, int] = {"chinchilla": 0, "hamster": 1, "rabbit": 2}
 EPOCHS = 20
 BATCH_SIZE = 258
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RESULTS_DIR = Path(Path(os.path.realpath(__file__)).parent) / "outputs"
+RESULTS_DIR = Path(__file__).resolve().parent / "outputs"
 RESULTS_DIR.mkdir(exist_ok=True)
 # endregion
 

@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import random
+from pathlib import Path
+import os
 import numpy as np
 from collections import deque, namedtuple
 import matplotlib.pyplot as plt
@@ -27,6 +29,8 @@ TARGET_UPDATE = 0.005 # Soft update factor
 EPISODES = 100
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TRANSITION = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+RESULTS_DIR = Path(__file__).resolve().parent / "outputs"
+RESULTS_DIR.mkdir(exist_ok=True)
 # endregion
 
 class DQN(nn.Module):
@@ -126,25 +130,29 @@ class DQNAgent:
         for episode in range(EPISODES):
             state, _ = env.reset()
             state = torch.tensor(state, dtype=torch.float32, device=DEVICE).unsqueeze(0)
+            total_reward = 0
             
             for t in count():
                 action = self.select_action(state, env)
                 observation, reward, terminated, truncated, _ = env.step(action.item())
                 reward = torch.tensor([reward], device=DEVICE)
+                total_reward += reward.item()
                 next_state = None if terminated else torch.tensor(observation, dtype=torch.float32, device=DEVICE).unsqueeze(0)
                 self.memory.push(state, action, next_state, reward)
                 state = next_state
                 self.optimize_model()
+                
                 if terminated or truncated:
                     episode_durations.append(t + 1)
+                    print(f"Episode {episode + 1}/{EPISODES}, Steps: {t + 1}, Total Reward: {total_reward}")
                     break
-        self.save("dqn_cartpole.pth")
+        self.save(RESULTS_DIR / "dqn_cartpole.pth")
         env.close()
         return episode_durations
     
     def test(self, env):
         """Test the trained agent."""
-        self.load("dqn_cartpole.pth")
+        self.load(RESULTS_DIR / "dqn_cartpole.pth")
         state, _ = env.reset()
         state = torch.tensor(state, dtype=torch.float32, device=DEVICE).unsqueeze(0)
         total_reward = 0
@@ -160,7 +168,8 @@ class DQNAgent:
         print(f"Test Run - Total Reward: {total_reward}")
         env.close()
 
-def plot_durations(episode_durations):
+def plot_durations(episode_durations: list[int]) -> None:
+    """Plot duration of episodes."""
     plt.figure(1)
     plt.title('Training Progress')
     plt.xlabel('Episode')
