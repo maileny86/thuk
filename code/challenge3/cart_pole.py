@@ -3,7 +3,6 @@ CartPole DQN Trainer
 Author: Milena Napiorkowska
 Based on: https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
 """
-import pygame
 import math
 import gymnasium as gym
 import torch
@@ -11,8 +10,6 @@ import torch.nn as nn
 import torch.optim as optim
 import random
 from pathlib import Path
-import os
-import numpy as np
 from collections import deque, namedtuple
 import matplotlib.pyplot as plt
 from itertools import count
@@ -28,14 +25,14 @@ EPSILON_DECAY = 1000
 TARGET_UPDATE = 0.005 # Soft update factor
 EPISODES = 100
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-TRANSITION = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+TRANSITION = namedtuple('TRANSITION', ('state', 'action', 'next_state', 'reward'))
 RESULTS_DIR = Path(__file__).resolve().parent / "outputs"
 RESULTS_DIR.mkdir(exist_ok=True)
 # endregion
 
 class DQN(nn.Module):
     """Deep Q-Network."""
-    def __init__(self, num_observations, num_actions):
+    def __init__(self, num_observations: int, num_actions: int) -> None:
         super(DQN, self).__init__()
         self.layers = nn.Sequential(
             nn.Linear(num_observations, 128), nn.ReLU(),
@@ -43,7 +40,8 @@ class DQN(nn.Module):
             nn.Linear(128, num_actions)
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
+        """Forward pass."""
         return self.layers(x)
 
 class ReplayMemory:
@@ -175,6 +173,7 @@ def plot_durations(episode_durations: list[int]) -> None:
     plt.xlabel('Episode')
     plt.ylabel('Duration')
     plt.plot(episode_durations)
+    plt.savefig(RESULTS_DIR / "episode_durations.png")
     plt.show()
 
 if __name__ == "__main__":

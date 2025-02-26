@@ -1,7 +1,6 @@
 """Challenge 1 - Data generation and models benchmarking.
 Author: Milena Napiorkowska.
 """
-import os
 import gc
 import random
 import time
@@ -19,13 +18,13 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import models
 
 # region constants
-NUM_CLASSES = 8
-NUM_SAMPLES = 1000
-IMG_SIZE = 56
-BATCH_SIZE = 32
-EPOCHS = 20
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RESULTS_DIR = Path(__file__).resolve().parent / "outputs"
+NUM_CLASSES: int = 8
+NUM_SAMPLES: int = 1000
+IMG_SIZE: int = 56
+BATCH_SIZE: int = 32
+EPOCHS: int = 20
+DEVICE: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+RESULTS_DIR: Path = Path(__file__).resolve().parent / "outputs"
 RESULTS_DIR.mkdir(exist_ok=True)
 # endregion
 
@@ -70,8 +69,12 @@ class Arrow:
         """Calculate start and end points of the arrow."""
         rad = np.deg2rad(angle)
         delta = np.array([length * np.cos(rad), length * np.sin(rad)])
-        start = tuple(map(int, (max(0, min(self.image_size - 1, c - d)) for c, d in zip(center, delta))))
-        end = tuple(map(int, (max(0, min(self.image_size - 1, c + d)) for c, d in zip(center, delta))))
+        start = tuple(
+            map(int, (max(0, min(self.image_size - 1, c - d)) for c, d in zip(center, delta)))
+            )
+        end = tuple(
+            map(int, (max(0, min(self.image_size - 1, c + d)) for c, d in zip(center, delta)))
+            )
         return start, end
 
     def _draw(
@@ -111,7 +114,9 @@ class ArrowsDataset(Dataset):
         if visualize:
             plot_arrows(arrows, num_cols=10, num_rows=5)
 
-        data = torch.stack([torch.tensor(img, dtype=torch.float32).permute(2, 0, 1) / 255.0 for img in arrows])
+        data = torch.stack(
+            [torch.tensor(img, dtype=torch.float32).permute(2, 0, 1) / 255.0 for img in arrows]
+            )
         labels = torch.LongTensor(np.arange(self.num_samples) % self.num_classes)
 
         return data, labels
@@ -235,11 +240,12 @@ def initialize_models() -> dict[str, nn.Module]:
     }
 
 def plot_results(benchmarks) -> None:
+    """Plot benchamrks' results for visual comparison."""
     plt.figure(figsize=(18, 5))
 
     colors = plt.cm.Set1(np.linspace(0, 1, len(benchmarks)))
 
-    # Training Time
+    # Training time
     plt.subplot(131)
     plt.bar([b.name for b in benchmarks], [b.train_time for b in benchmarks], color=colors)
     plt.title("Training Time (s)")
@@ -250,7 +256,7 @@ def plot_results(benchmarks) -> None:
     plt.ylim(0, 1)
     plt.title("Test Accuracy")
 
-    # Loss History
+    # Loss history
     plt.subplot(133)
     for b, c in zip(benchmarks, colors):
         plt.plot(b.loss_history, label=b.name, color=c)
@@ -274,10 +280,8 @@ def plot_arrows(imgs: list[np.ndarray], num_rows: int = 1, num_cols: int = 5) ->
         axes = axes.reshape(1, -1)
 
     # Plot images
-    for idx in range(len(imgs)):
-        img = imgs[idx]
-        row = idx // num_cols
-        col = idx % num_cols
+    for idx, img in enumerate(imgs):
+        row, col = divmod(idx, num_cols)
         axes[row, col].imshow(img)
         axes[row, col].axis("off")
 
@@ -288,6 +292,7 @@ def plot_arrows(imgs: list[np.ndarray], num_rows: int = 1, num_cols: int = 5) ->
         axes[row, col].axis("off")
 
     plt.tight_layout()
+    plt.savefig(RESULTS_DIR/"dataset_example.png")
     plt.show()
 
 def main():

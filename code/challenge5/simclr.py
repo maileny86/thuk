@@ -1,7 +1,6 @@
 """Challenge 5: Self-supervised learning and embeddings generation
 Author: Milena Napiorkowska
 """
-import os
 from pathlib import Path
 import random
 from typing import Self
