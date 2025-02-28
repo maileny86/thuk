@@ -1,6 +1,7 @@
 """Challenge 5: Self-supervised learning and embeddings generation
 Author: Milena Napiorkowska
 """
+import typer
 from pathlib import Path
 import random
 from typing import Self
@@ -272,5 +273,4 @@ def main(data_dir: Path, model_name: str) -> None:
 
 
 if __name__ == "__main__":
-    input_data_dir = Path("C:\\Users\\Milena\\Downloads\\thales\\challenges\\challenge5\\data")
-    main(input_data_dir, model_name="simclr.pth")
+    typer.run(main)
